@@ -23,8 +23,8 @@ echo spsox 0.2
 #Runs spsox in the current directory.
 
 current(){
-find . -maxdepth 1 -type f -name "*.flac" -execdir sh -c 'sox "$1" -n remix 1 spectrogram -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 -o "${1%.flac}.zoomed.png" \
-&& sox "$1" -n remix 1 spectrogram -x 3000 -y 513 -z 120 -w Kaiser -o "${1%.flac}.full.png" \
+find . -maxdepth 1 -type f -name "*.flac" -execdir sh -c 'sox "$1" -n remix 1 spectrogram -t "${1%.flac}" -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 -o "${1%.flac}.zoomed.png" \
+&& sox "$1" -n remix 1 spectrogram -t "${1%.flac}" -x 3000 -y 513 -z 120 -w Kaiser -o "${1%.flac}.full.png" \
 && mkdir -p specs \
 && mv "${1%.flac}.zoomed.png"* specs/ \
 && mv "${1%.flac}.full.png"* specs/' Cvt {} \;
@@ -33,8 +33,8 @@ find . -maxdepth 1 -type f -name "*.flac" -execdir sh -c 'sox "$1" -n remix 1 sp
 #Runs spsox recursively. spsox -r directory
 
 recursive(){
-find "${directory}" -type f -name "*.flac" -execdir sh -c 'sox "$1" -n remix 1 spectrogram -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 -o "${1%.flac}.zoomed.png" \
-&& sox "$1" -n remix 1 spectrogram -x 3000 -y 513 -z 120 -w Kaiser -o "${1%.flac}.full.png" \
+find "${directory}" -type f -name "*.flac" -execdir sh -c 'sox "$1" -n remix 1 spectrogram -t "${1%.flac}" -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 -o "${1%.flac}.zoomed.png" \
+&& sox "$1" -n remix 1 spectrogram -t "${1%.flac}" -x 3000 -y 513 -z 120 -w Kaiser -o "${1%.flac}.full.png" \
 && mkdir -p specs \
 && mv "${1%.flac}.zoomed.png"* specs/ \
 && mv "${1%.flac}.full.png"* specs/' Cvt {} \;
