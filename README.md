@@ -4,11 +4,13 @@ Simple Bash script for creating spectrograms from flac files.
 I found no script or program that would produce spectrograms how I liked so I made this script for people like me who require
 a simple solution. I want to share this script so that people like myself (Computer literate, but limited experience scripting, coding and so forth.)
 
-#Requires
+# Requires
 
 [SoX](http://sox.sourceforge.net/)
+
 [Bash](https://www.gnu.org/software/bash/) You should already have bash if you use GNU/Linux. 
-Git. Only if you want to clone the repository.
+
+[Git](https://git-scm.com/download/linux) Only if you want to clone the repository.
 # Installation
 
 Open a terminal and type or paste the following.
@@ -42,3 +44,9 @@ Simply typing `spsox` within the directory containing the flac files will run it
 It will then create a directory and move the spectrograms into a folder named 'specs'. It will create a full spectrogram of each file and a 2 second zoomed in spectrogram.
 
 Using `spsox -r` requires you to specify a directory after which it will run on all files recursively. It will look for flac files in every folder and sub folder within the directory you specify. This is useful when you want to create spectrograms of multiple albums. Use with care.
+
+# Issues
+
+Any problems feel free to open an issue/ticket.
+
+I'm not sure how this will behave on windows using WSL. If it is not working I have a legacy version below that should it's named oldspsox. If spsox is working fine you can ignore oldspsox as it's not as useful.
