@@ -28,7 +28,7 @@ We make the script executable so we can run it.
 
 Now we move it to the local bin directory so you can call it from wherever you need to.
 
-`sudo mv spsox /usr/local/bin/`
+`sudo cp spsox /usr/local/bin/`
 
 That's it.
 
