@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# filename: spsox
+# author: Ewol
+
+#Supposed to require a directory when spsox is run but can't figure out how to make it work when an argument is specified.
+if [ $# -lt 1 ]; then
+    echo "Please enter an input directory!"
+    exit 1
+fi
+
+#arguements that I don't entirely understand how they work
+args=( "${@}" )
+
+directory="${args[$(( ${#args[@]} - 1 ))]%/}"
+
+#Shows the version of spsox. Pretty irrelevant
+
+showVersion(){
+echo spsox 0.2
+}
+
+#Runs spsox in the current directory.
+
+current(){
+find . -maxdepth 1 -type f -name "*.flac" -execdir sh -c 'sox "$1" -n remix 1 spectrogram -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 -o "${1%.flac}.zoomed.png" && mkdir -p specs && mv "${1%.flac}.zoomed.png"* specs/' Cvt {} \;
+}
+
+#Runs spsox recursively. spsox -r directory
+
+recursive(){
+find "${directory}" -type f -name "*.flac" -execdir sh -c 'sox "$1" -n remix 1 spectrogram -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 -o "${1%.flac}.zoomed.png" && mkdir -p specs && mv "${1%.flac}.zoomed.png"* specs/' Cvt {} \;
+}
+
+showHelp() {
+cat << EOF
+Usage: spsox [-hvr]
+
+Option      Single dash        Long Option     Usage             Meaning
+
+-c          -current           --current       spsox -c    Will run in the current directory.
+
+-r          -recursive         --recursive	   spsox -r    Runs recursively. Requires a directory to be specified then *should* work on all folders and subfolders.
+
+-h          -help              --help          spsox -h    Displays the text you're reading now.
+
+-v          -sox-version       --sox-version	 spsox -v    Displays the version of the script. Rather pointless, but oh well.
+
+EOF
+# EOF
+}
+
+# $@ is all command line parameters passed to the script.
+# -o is for short options like -v
+# -l is for long options with double dash like --version
+# the comma separates different long options
+# -a is for long options with single dash like -version
+options=$(getopt -l "help,version,current,recursive" -o "hvtr" -a -- "$@")
+
+# set --:
+# If no arguments follow this option, then the positional parameters are unset. Otherwise, the positional parameters
+# are set to the arguments, even if some of them begin with a ‘-’.
+eval set -- "$options"
+
+while true
+do
+case $1 in
+-h|--help)
+    showHelp
+    exit 0
+    ;;
+-c|--current)
+    current
+    exit 0
+    ;;
+-r|--recursive)
+    recursive
+    exit 0
+    ;;
+-v|--version)
+    showVersion
+    exit 0
+    ;;
+--)
+    shift
+    break;;
+esac
+shift
+done
