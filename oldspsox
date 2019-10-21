@@ -1,0 +1,13 @@
+#!/bin/bash
+mkdir -p "spectrograms"
+for file in *.flac
+do
+outfile="${file%.*}-zoomed.png"
+sox "$file" -n remix 1 spectrogram -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 -o "$outfile"
+echo "$i $outfile"
+mv "$outfile" spectrograms/
+outfile="${file%.*}-full.png"
+sox "$file" -n remix 1 spectrogram -x 3000 -y 513 -z 120 -w Kaiser -o "$outfile"
+echo "$i - $outfile"
+mv "$outfile" spectrograms/
+done
