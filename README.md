@@ -2,7 +2,7 @@
 Simple Bash script for creating spectrograms from flac files. 
 
 I found no script or program that would produce spectrograms how I liked so I made this script for people like me who require
-a simple solution. I want to share this script so that people like myself. (Computer literate, but limited experience scripting, coding and so forth.)
+a simple solution.
 
 # Requires
 
