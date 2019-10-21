@@ -9,9 +9,11 @@ a simple solution.
 [SoX](http://sox.sourceforge.net/)
 
 [Bash](https://www.gnu.org/software/bash/) 
+
 You should already have bash if you use GNU/Linux. 
 
 [Git](https://git-scm.com/download/linux) 
+
 Only if you want to clone the repository.
 # Installation
 
