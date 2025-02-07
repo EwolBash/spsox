@@ -2,6 +2,7 @@
 
 # Configuration
 script_version="0.3"
+default_threads=4  # Default number of threads if not specified
 log_file="/tmp/spsox.log"
 
 # Function to display help
@@ -15,11 +16,11 @@ show_help() {
     echo ""
     echo "Arguments:"
     echo "  input_directory       Directory containing .flac files (default: current directory)."
-    echo "  threads               Number of parallel threads to use (default: 4)."
+    echo "  threads               Number of parallel threads to use (default: $default_threads)."
     echo ""
     echo "Behavior:"
     echo "  - If no arguments are provided, the script processes .flac files in the current directory"
-    echo "    with the default thread count (4)."
+    echo "    with the default thread count ($default_threads)."
     echo "  - If only a number is provided (e.g., '8'), it is interpreted as the thread count, and the"
     echo "    input directory defaults to the current directory."
     echo "  - If both an input directory and thread count are provided, they are used accordingly."
@@ -68,13 +69,13 @@ is_number() {
 
 # Assign arguments after parsing options
 if [[ -z "$1" ]]; then
-    # No arguments provided: Default to current directory and 4 threads
+    # No arguments provided: Default to current directory and default threads
     input_dir="$(pwd)"
-    threads=4
+    threads="$default_threads"
 elif [[ -d "$1" ]]; then
     # First argument is a valid directory
     input_dir="$1"
-    threads="${2:-4}"  # Default to 4 threads if not specified
+    threads="${2:-$default_threads}"  # Use second argument as thread count, or default
 elif is_number "$1"; then
     # First argument is a number (interpreted as thread count)
     input_dir="$(pwd)"  # Default to current directory
