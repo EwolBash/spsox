@@ -1,0 +1,171 @@
+#!/bin/bash
+
+# Configuration
+script_version="0.3"
+input_dir="${1:-$(pwd)}"  # Default to current directory if no argument is provided
+threads="${2:-4}"  # Default to 4 threads if not specified
+log_file="/tmp/spsox.log"
+
+# Function to display help
+show_help() {
+    echo "Usage: $0 [options] [input_directory] [threads]"
+    echo ""
+    echo "Options:"
+    echo "  -r, --recursive       Process .flac files in the specified directory and all subdirectories."
+    echo "  -h, --help            Display this help message and exit."
+    echo "  -v, --version         Display the script version and exit."
+    echo ""
+    echo "Arguments:"
+    echo "  input_directory       Directory containing .flac files (default: current directory)."
+    echo "  threads               Number of parallel threads to use (default: 4)."
+    echo ""
+    echo "Behavior:"
+    echo "  - If no arguments are provided, the script processes .flac files in the current directory"
+    echo "    with the default thread count (4)."
+    echo "  - If only a number is provided (e.g., '8'), it is interpreted as the thread count, and the"
+    echo "    input directory defaults to the current directory."
+    echo "  - If both an input directory and thread count are provided, they are used accordingly."
+    echo ""
+    echo "Examples:"
+    echo "  $0 -r /path/to/input 8        Process .flac files recursively with 8 threads."
+    echo "  $0 /path/to/input 4           Process .flac files in the specified directory with 4 threads."
+    echo "  $0 6                          Process .flac files in the current directory with 6 threads."
+    echo "  $0                            Process .flac files in the current directory with default settings."
+    echo "  $0 -h                         Show this help message."
+    echo "  $0 -v                         Show the script version."
+}
+
+# Function to display version
+show_version() {
+    echo "$0 version $script_version"
+}
+
+# Parse options
+recursive=false
+while [[ "$1" == -* ]]; do
+    case "$1" in
+        -r | --recursive)
+            recursive=true
+            shift
+            ;;
+        -h | --help)
+            show_help
+            exit 0
+            ;;
+        -v | --version)
+            show_version
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown option '$1'. Use -h for help."
+            exit 1
+            ;;
+    esac
+done
+
+# Assign arguments after parsing options
+input_dir="${1:-$(pwd)}"
+threads="${2:-4}"
+
+# Validate input
+if [[ ! -d "$input_dir" ]]; then
+    echo "Error: Input directory '$input_dir' does not exist."
+    exit 1
+fi
+
+# Function to generate spectrograms for a single FLAC file
+generate_spectrograms() {
+    local file="$1"
+
+    # Debugging: Log the file being processed
+    echo "DEBUG: Processing file: '$file'" >>"$log_file"
+
+    # Skip if the file is empty or invalid
+    if [[ -z "$file" || ! -f "$file" ]]; then
+        echo "ERROR: Invalid or empty file path: '$file'" >>"$log_file"
+        return
+    fi
+
+    # Determine the parent directory of the file
+    local parent_dir=$(dirname "$file")
+    local base_name=$(basename "$file")
+
+    # Create a specs folder in the parent directory
+    local specs_dir="$parent_dir/specs"
+    mkdir -p "$specs_dir"
+
+    # Define output file paths
+    local zoomed_file="$specs_dir/${base_name%.*}.zoomed.png"
+    local full_file="$specs_dir/${base_name%.*}.full.png"
+
+    # Skip if both spectrogram files already exist
+    if [[ -f "$zoomed_file" && -f "$full_file" ]]; then
+        echo "Skipping $base_name (already processed)" >>"$log_file"
+        return
+    fi
+
+    # Generate the zoomed spectrogram
+    echo "Generating zoomed spectrogram for $base_name..."
+    sox "$file" -n remix 1 spectrogram \
+        -t "${base_name%.*}" \
+        -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 \
+        -o "$zoomed_file" 2>>"$log_file"
+    if [[ $? -ne 0 ]]; then
+        echo "Error generating zoomed spectrogram for $base_name" >>"$log_file"
+    else
+        echo "Finished zoomed spectrogram for $base_name" >>"$log_file"
+    fi
+
+    # Generate the full spectrogram
+    echo "Generating full spectrogram for $base_name..."
+    sox "$file" -n remix 1 spectrogram \
+        -t "${base_name%.*}" \
+        -x 3000 -y 513 -z 120 -w Kaiser \
+        -o "$full_file" 2>>"$log_file"
+    if [[ $? -ne 0 ]]; then
+        echo "Error generating full spectrogram for $base_name" >>"$log_file"
+    else
+        echo "Finished full spectrogram for $base_name" >>"$log_file"
+    fi
+}
+
+export -f generate_spectrograms
+
+# Trap to clean up background jobs on script exit or interrupt
+trap 'kill $(jobs -p) 2>/dev/null; echo "Cleaning up..."' EXIT
+
+# Array to track background job PIDs
+declare -a pids=()
+
+# Find all FLAC files and process them in parallel
+if $recursive; then
+    find_command="find \"$input_dir\" -type f -name \"*.flac\" -print0"
+else
+    find_command="find \"$input_dir\" -maxdepth 1 -type f -name \"*.flac\" -print0"
+fi
+
+while IFS= read -r -d '' file; do
+    (
+        generate_spectrograms "$file"
+    ) &
+    # Store the PID of the background job
+    pids+=($!)
+
+    # Limit the number of concurrent jobs
+    while (( ${#pids[@]} >= threads )); do
+        # Wait for any job to finish
+        for i in "${!pids[@]}"; do
+            if ! kill -0 "${pids[i]}" 2>/dev/null; then
+                unset 'pids[i]'
+            fi
+        done
+        sleep 0.1
+    done
+done < <(eval "$find_command")
+
+# Wait for all remaining background jobs to finish
+for pid in "${pids[@]}"; do
+    wait "$pid"
+done
+
+echo "All spectrograms generated. Check '$log_file' for details."
