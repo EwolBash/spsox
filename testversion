@@ -5,6 +5,12 @@ script_version="0.3"
 default_threads=4  # Default number of threads if not specified
 log_file="/tmp/spsox.log"
 
+# Define color codes for output
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
 # Function to display help
 show_help() {
     echo "Usage: $0 [options] [input_directory] [threads]"
@@ -92,6 +98,38 @@ if [[ ! -d "$input_dir" ]]; then
     exit 1
 fi
 
+# Variables to track progress and summary
+total_files=$(find "$input_dir" -type f -name "*.flac" | wc -l)
+counter_file="/tmp/spsox_counters"
+> "$counter_file"  # Initialize counter file
+echo "success=0" > "$counter_file"
+echo "skipped=0" >> "$counter_file"
+echo "error=0" >> "$counter_file"
+echo "processed=0" >> "$counter_file"
+
+# Lock file for atomic updates to counters
+lock_file="/tmp/spsox.lock"
+touch "$lock_file"
+
+# Function to atomically increment counters
+increment_counter() {
+    local counter_name="$1"
+    (
+        flock -x 200
+        source "$counter_file"
+        case "$counter_name" in
+            success) ((success++)) ;;
+            error) ((error++)) ;;
+            skipped) ((skipped++)) ;;
+            processed) ((processed++)) ;;
+        esac
+        echo "success=$success" > "$counter_file"
+        echo "skipped=$skipped" >> "$counter_file"
+        echo "error=$error" >> "$counter_file"
+        echo "processed=$processed" >> "$counter_file"
+    ) 200>"$lock_file"
+}
+
 # Function to generate spectrograms for a single FLAC file
 generate_spectrograms() {
     local file="$1"
@@ -101,7 +139,11 @@ generate_spectrograms() {
 
     # Skip if the file is empty or invalid
     if [[ -z "$file" || ! -f "$file" ]]; then
-        echo "ERROR: Invalid or empty file path: '$file'" >>"$log_file"
+        echo -e "${RED}ERROR: Invalid or empty file path: '$file'${NC}" >>"$log_file"
+        increment_counter "error"
+        increment_counter "processed"
+        source "$counter_file"
+        echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
         return
     fi
 
@@ -119,39 +161,57 @@ generate_spectrograms() {
 
     # Skip if both spectrogram files already exist
     if [[ -f "$zoomed_file" && -f "$full_file" ]]; then
-        echo "Skipping $base_name (already processed)" >>"$log_file"
+        echo -e "${YELLOW}Skipping $base_name (already processed)${NC}"
+        increment_counter "skipped"
+        increment_counter "processed"
+        source "$counter_file"
+        echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
         return
     fi
 
     # Generate the zoomed spectrogram
-    echo "Generating zoomed spectrogram for $base_name..."
+    echo -e "Generating zoomed spectrogram for ${base_name}..."
     sox "$file" -n remix 1 spectrogram \
         -t "${base_name%.*}" \
         -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 \
         -o "$zoomed_file" 2>>"$log_file"
     if [[ $? -ne 0 ]]; then
-        echo "Error generating zoomed spectrogram for $base_name" >>"$log_file"
+        echo -e "${RED}Error generating zoomed spectrogram for $base_name${NC}"
+        increment_counter "error"
+        increment_counter "processed"
+        source "$counter_file"
+        echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
+        return
     else
-        echo "Finished zoomed spectrogram for $base_name" >>"$log_file"
+        echo -e "${GREEN}Finished zoomed spectrogram for $base_name${NC}"
     fi
 
     # Generate the full spectrogram
-    echo "Generating full spectrogram for $base_name..."
+    echo -e "Generating full spectrogram for ${base_name}..."
     sox "$file" -n remix 1 spectrogram \
         -t "${base_name%.*}" \
         -x 3000 -y 513 -z 120 -w Kaiser \
         -o "$full_file" 2>>"$log_file"
     if [[ $? -ne 0 ]]; then
-        echo "Error generating full spectrogram for $base_name" >>"$log_file"
+        echo -e "${RED}Error generating full spectrogram for $base_name${NC}"
+        increment_counter "error"
+        increment_counter "processed"
+        source "$counter_file"
+        echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
+        return
     else
-        echo "Finished full spectrogram for $base_name" >>"$log_file"
+        echo -e "${GREEN}Finished full spectrogram for $base_name${NC}"
+        increment_counter "success"
+        increment_counter "processed"
+        source "$counter_file"
+        echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
     fi
 }
 
 export -f generate_spectrograms
 
 # Trap to clean up background jobs on script exit or interrupt
-trap 'kill $(jobs -p) 2>/dev/null; echo "Cleaning up..."' EXIT
+trap 'kill $(jobs -p) 2>/dev/null; rm -f "$lock_file" "$counter_file"; echo "Cleaning up..."' EXIT
 
 # Array to track background job PIDs
 declare -a pids=()
@@ -196,5 +256,16 @@ end_time=$(date +%s)
 # Calculate total time
 total_time=$((end_time - start_time))
 
-echo "All spectrograms generated. Total time: ${total_time} seconds."
+# Read final counters
+source "$counter_file"
+
+# Display summary
+echo ""
+echo "Processing Summary:"
+echo "-------------------"
+echo "Total Files: $total_files"
+echo "Successfully Processed: $success"
+echo "Skipped (Already Processed): $skipped"
+echo "Errors: $error"
+echo "Total Time: ${total_time} seconds."
 echo "Check '$log_file' for details."
