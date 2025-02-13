@@ -1,8 +1,23 @@
 #!/bin/bash
+# This script is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This script is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this script. If not, see <https://www.gnu.org/licenses/>.
 
+script_name=$(basename "$0")
 # Configuration
-script_version="0.3"
+script_version="0.4"
 default_threads=4  # Default number of threads if not specified
+default_start_time="1:00"  # Default start time for zoomed spectrogram
+default_duration="0:02"    # Default duration for zoomed spectrogram
 log_file="/tmp/spsox.log"
 
 # Define color codes for output
@@ -13,7 +28,7 @@ NC='\033[0m' # No Color
 
 # Function to display help
 show_help() {
-    echo "Usage: $0 [options] [input_directory] [threads]"
+    echo "Usage: $script_name [options] [input] [threads] [start_time] [duration]"
     echo ""
     echo "Options:"
     echo "  -r, --recursive       Process .flac files in the specified directory and all subdirectories."
@@ -21,28 +36,94 @@ show_help() {
     echo "  -v, --version         Display the script version and exit."
     echo ""
     echo "Arguments:"
-    echo "  input_directory       Directory containing .flac files (default: current directory)."
+    echo "  input                 Either a directory containing .flac files or a single .flac file."
+    echo "                        If omitted, defaults to the current directory."
     echo "  threads               Number of parallel threads to use (default: $default_threads)."
-    echo ""
-    echo "Behavior:"
-    echo "  - If no arguments are provided, the script processes .flac files in the current directory"
-    echo "    with the default thread count ($default_threads)."
-    echo "  - If only a number is provided (e.g., '8'), it is interpreted as the thread count, and the"
-    echo "    input directory defaults to the current directory."
-    echo "  - If both an input directory and thread count are provided, they are used accordingly."
+    echo "  start_time            Start time for the zoomed spectrogram (default: $default_start_time)."
+    echo "  duration              Duration of the zoomed spectrogram (default: $default_duration)."
     echo ""
     echo "Examples:"
-    echo "  $0 -r /path/to/input 8        Process .flac files recursively with 8 threads."
-    echo "  $0 /path/to/input 4           Process .flac files in the specified directory with 4 threads."
-    echo "  $0 6                          Process .flac files in the current directory with 6 threads."
-    echo "  $0                            Process .flac files in the current directory with default settings."
-    echo "  $0 -h                         Show this help message."
-    echo "  $0 -v                         Show the script version."
+    echo "  Default Usage:"
+    echo "    $script_name                  Process .flac files in the current directory with default settings."
+    echo ""
+    echo "  Process a Single File:"
+    echo "    $script_name /path/to/file.flac 12 0:20 0:05"
+    echo "                        Process a single .flac file with 12 threads, starting at 0:20,"
+    echo "                        and spanning 5 seconds."
+    echo ""
+    echo "  Process a Directory:"
+    echo "    $script_name /path/to/directory 8 3:00 0:05"
+    echo "                        Process all .flac files in the specified directory with 8 threads,"
+    echo "                        starting at 3:00 and spanning 5 seconds."
+    echo ""
+    echo "  Recursive Processing:"
+    echo "    $script_name -r /path/to/directory 4"
+    echo "                        Process all .flac files in the directory and its subdirectories"
+    echo "                        with 4 threads."
+    echo ""
+    echo "  Custom Thread Count Only:"
+    echo "    $script_name 6                Process .flac files in the current directory with 6 threads."
+    echo ""
+    echo "Notes:"
+    echo "  - The 'start_time' and 'duration' arguments must be in HH:MM:SS or MM:SS format."
+    echo "  - If 'start_time + duration' exceeds the file length, the duration is adjusted automatically."
+    echo "  - Check '$log_file' for detailed logs and debugging information."
 }
 
 # Function to display version
 show_version() {
-    echo "$0 version $script_version"
+    echo "$script_name version $script_version"
+}
+
+# Helper function to check if a value is a number
+is_number() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+# Helper function to validate time format (HH:MM:SS or MM:SS)
+is_valid_time() {
+    [[ "$1" =~ ^([0-9]{1,2}:)?[0-9]{1,2}:[0-9]{2}$ ]]
+}
+
+# Helper function to convert time (HH:MM:SS or MM:SS) to seconds
+time_to_seconds() {
+    local time="$1"
+    local hours=0
+    local minutes=0
+    local seconds=0
+
+    # Split the time into components
+    IFS=':' read -r part1 part2 part3 <<< "$time"
+
+    # Determine the format (HH:MM:SS or MM:SS)
+    if [[ -n "$part3" ]]; then
+        # HH:MM:SS format
+        hours=${part1:-0}
+        minutes=${part2:-0}
+        seconds=${part3:-0}
+    else
+        # MM:SS format
+        hours=0
+        minutes=${part1:-0}
+        seconds=${part2:-0}
+    fi
+
+    # Convert to total seconds
+    echo $((10#$hours * 3600 + 10#$minutes * 60 + 10#$seconds))
+}
+
+# Helper function to convert seconds to HH:MM:SS or MM:SS
+seconds_to_time() {
+    local total_seconds=$1
+    local hours=$((total_seconds / 3600))
+    local minutes=$(( (total_seconds % 3600) / 60 ))
+    local seconds=$((total_seconds % 60))
+
+    if (( hours > 0 )); then
+        printf "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
+    else
+        printf "%02d:%02d" "$minutes" "$seconds"
+    fi
 }
 
 # Parse options
@@ -68,27 +149,32 @@ while [[ "$1" == -* ]]; do
     esac
 done
 
-# Helper function to check if a value is a number
-is_number() {
-    [[ "$1" =~ ^[0-9]+$ ]]
-}
-
 # Assign arguments after parsing options
-if [[ -z "$1" ]]; then
-    # No arguments provided: Default to current directory and default threads
-    input_dir="$(pwd)"
-    threads="$default_threads"
+input_dir="$(pwd)"  # Default to current directory
+threads="$default_threads"
+start_time="$default_start_time"
+duration="$default_duration"
+
+if [[ -f "$1" ]]; then
+    # Input is a single FLAC file
+    single_file="$1"
+    threads="${2:-$default_threads}"  # Use second argument as thread count, or default
+    start_time="${3:-$default_start_time}"  # Use third argument as start time, or default
+    duration="${4:-$default_duration}"     # Use fourth argument as duration, or default
 elif [[ -d "$1" ]]; then
-    # First argument is a valid directory
+    # Input is a directory
     input_dir="$1"
     threads="${2:-$default_threads}"  # Use second argument as thread count, or default
+    start_time="${3:-$default_start_time}"  # Use third argument as start time, or default
+    duration="${4:-$default_duration}"     # Use fourth argument as duration, or default
 elif is_number "$1"; then
     # First argument is a number (interpreted as thread count)
-    input_dir="$(pwd)"  # Default to current directory
     threads="$1"
+    start_time="${2:-$default_start_time}"  # Use second argument as start time, or default
+    duration="${3:-$default_duration}"     # Use third argument as duration, or default
 else
-    # Invalid argument
-    echo "Error: '$1' is neither a valid directory nor a number. Use -h for help."
+    # Invalid input
+    echo "Error: '$1' is neither a valid file nor a directory. Use -h for help."
     exit 1
 fi
 
@@ -97,6 +183,36 @@ if [[ ! -d "$input_dir" ]]; then
     echo "Error: Input directory '$input_dir' does not exist."
     exit 1
 fi
+
+# Validate thread count
+if ! is_number "$threads"; then
+    echo "Error: Invalid thread count '$threads'. Must be a positive integer."
+    exit 1
+fi
+
+# Validate start time format
+if ! is_valid_time "$start_time"; then
+    echo "Error: Invalid start time format '$start_time'. Use HH:MM:SS or MM:SS."
+    exit 1
+fi
+
+# Validate duration format
+if ! is_valid_time "$duration"; then
+    echo "Error: Invalid duration format '$duration'. Use HH:MM:SS or MM:SS."
+    exit 1
+fi
+
+# Convert start_time and duration to seconds
+start_seconds=$(time_to_seconds "$start_time")
+duration_seconds=$(time_to_seconds "$duration")
+
+# Convert start_seconds and duration_seconds back to HH:MM:SS or MM:SS format
+start_time_formatted=$(seconds_to_time "$start_seconds")
+duration_formatted=$(seconds_to_time "$duration_seconds")
+
+# Debugging: Log the parsed start_time and duration
+echo "DEBUG: Parsed start_time='$start_time' -> $start_seconds seconds -> formatted as '$start_time_formatted'" >>"$log_file"
+echo "DEBUG: Parsed duration='$duration' -> $duration_seconds seconds -> formatted as '$duration_formatted'" >>"$log_file"
 
 # Variables to track progress and summary
 total_files=$(find "$input_dir" -type f -name "*.flac" | wc -l)
@@ -169,11 +285,45 @@ generate_spectrograms() {
         return
     fi
 
+    # Get the duration of the FLAC file
+    local file_duration=$(soxi -D "$file" 2>/dev/null)
+    if [[ $? -ne 0 || -z "$file_duration" ]]; then
+        echo -e "${RED}Error: Unable to determine duration of file '$file'. Skipping.${NC}"
+        increment_counter "error"
+        increment_counter "processed"
+        source "$counter_file"
+        echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
+        return
+    fi
+
+    # Truncate file_duration to an integer
+    file_duration=${file_duration%.*}
+
+    # Check if start_time exceeds file duration
+    if (( start_seconds >= file_duration )); then
+        echo -e "${RED}Error: Start time '$start_time_formatted' exceeds file duration ($file_duration seconds). Skipping.${NC}"
+        increment_counter "error"
+        increment_counter "processed"
+        source "$counter_file"
+        echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
+        return
+    fi
+
+    # Adjust duration if start_time + duration exceeds file duration
+    if (( start_seconds + duration_seconds > file_duration )); then
+        echo -e "${YELLOW}Warning: Start time '$start_time_formatted' + duration '$duration_formatted' exceeds file duration ($file_duration seconds). Adjusting duration.${NC}"
+        duration_seconds=$((file_duration - start_seconds))
+        duration_formatted=$(seconds_to_time "$duration_seconds")
+    fi
+
+    # Debugging: Log the final start_time and duration being used
+    echo "DEBUG: Final start_time='$start_time_formatted', duration='$duration_formatted'" >>"$log_file"
+
     # Generate the zoomed spectrogram
-    echo -e "Generating zoomed spectrogram for ${base_name}..."
+    echo -e "Generating zoomed spectrogram for ${base_name} starting at ${start_time_formatted} with duration ${duration_formatted}..."
     sox "$file" -n remix 1 spectrogram \
         -t "${base_name%.*}" \
-        -X 500 -y 1025 -z 120 -w Kaiser -S 1:00 -d 0:02 \
+        -X 500 -y 1025 -z 120 -w Kaiser -S "$start_time_formatted" -d "$duration_formatted" \
         -o "$zoomed_file" 2>>"$log_file"
     if [[ $? -ne 0 ]]; then
         echo -e "${RED}Error generating zoomed spectrogram for $base_name${NC}"
@@ -207,7 +357,6 @@ generate_spectrograms() {
         echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
     fi
 }
-
 export -f generate_spectrograms
 
 # Trap to clean up background jobs on script exit or interrupt
@@ -219,36 +368,40 @@ declare -a pids=()
 # Start timing
 start_time=$(date +%s)
 
-# Find all FLAC files and process them in parallel
-if $recursive; then
-    find_command="find \"$input_dir\" -type f -name \"*.flac\" -print0"
+if [[ -n "$single_file" ]]; then
+    # Process the single file
+    generate_spectrograms "$single_file"
 else
-    find_command="find \"$input_dir\" -maxdepth 1 -type f -name \"*.flac\" -print0"
-fi
+    # Process all FLAC files in the directory
+    if $recursive; then
+        find_command="find \"$input_dir\" -type f -name \"*.flac\" -print0"
+    else
+        find_command="find \"$input_dir\" -maxdepth 1 -type f -name \"*.flac\" -print0"
+    fi
 
-while IFS= read -r -d '' file; do
-    (
-        generate_spectrograms "$file"
-    ) &
-    # Store the PID of the background job
-    pids+=($!)
-
-    # Limit the number of concurrent jobs
-    while (( ${#pids[@]} >= threads )); do
-        # Wait for any job to finish
-        for i in "${!pids[@]}"; do
-            if ! kill -0 "${pids[i]}" 2>/dev/null; then
-                unset 'pids[i]'
-            fi
+    while IFS= read -r -d '' file; do
+        (
+            generate_spectrograms "$file"
+        ) &
+        # Store the PID of the background job
+        pids+=($!)
+        # Limit the number of concurrent jobs
+        while (( ${#pids[@]} >= threads )); do
+            # Wait for any job to finish
+            for i in "${!pids[@]}"; do
+                if ! kill -0 "${pids[i]}" 2>/dev/null; then
+                    unset 'pids[i]'
+                fi
+            done
+            sleep 0.1
         done
-        sleep 0.1
-    done
-done < <(eval "$find_command")
+    done < <(eval "$find_command")
 
-# Wait for all remaining background jobs to finish
-for pid in "${pids[@]}"; do
-    wait "$pid"
-done
+    # Wait for all remaining background jobs to finish
+    for pid in "${pids[@]}"; do
+        wait "$pid"
+    done
+fi
 
 # End timing
 end_time=$(date +%s)
