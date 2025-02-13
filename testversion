@@ -29,6 +29,12 @@ RED='\033[0;31m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
+# Dependency Check for sox
+if ! command -v sox &>/dev/null; then
+    echo -e "${RED}Error: 'sox' is not installed. Please install it before running this script.${NC}"
+    exit 1
+fi
+
 # Function to display help
 show_help() {
     echo "Usage: $script_name [options] [input] [threads] [start_time] [duration]"
@@ -47,7 +53,7 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  Default Usage:"
-    echo "    $script_name                  Process .flac files in the current directory with default settings."
+    echo "    $script_name        Process .flac files in the current directory with default settings."
     echo ""
     echo "  Process a Single File:"
     echo "    $script_name /path/to/file.flac 12 0:20 0:05"
@@ -65,12 +71,14 @@ show_help() {
     echo "                        with 4 threads."
     echo ""
     echo "  Custom Thread Count Only:"
-    echo "    $script_name 6                Process .flac files in the current directory with 6 threads."
+    echo "    $script_name 6      Process .flac files in the current directory with 6 threads."
     echo ""
     echo "Notes:"
     echo "  - The 'start_time' and 'duration' arguments must be in HH:MM:SS or MM:SS format."
     echo "  - If 'start_time + duration' exceeds the file length, the duration is adjusted automatically."
-    echo "  - Check '$log_file' for detailed logs and debugging information."
+    echo "  - Logs are written to '$log_file'. You can change the log file path by setting the"
+    echo "    by modifying the script or adding command-line options."
+    echo "  - Requires 'sox' to be installed. Install it using your package manager (e.g., apt, brew)."
 }
 
 # Function to display version
@@ -176,15 +184,17 @@ elif [[ -d "$1" ]]; then
 elif is_number "$1"; then
     # First argument is a number (interpreted as thread count)
     threads="$1"
-    input_dir="$(pwd)"  # Explicitly set input_dir to current directory
     start_time="${2:-$default_start_time}"  # Use second argument as start time, or default
     duration="${3:-$default_duration}"     # Use third argument as duration, or default
+elif is_valid_time "$1" && is_valid_time "$2"; then
+    # First two arguments are valid times (start_time and duration)
+    start_time="$1"
+    duration="$2"
 else
     # Invalid input
-    echo "Error: '$1' is neither a valid file nor a directory. Use -h for help."
+    echo "Error: '$1' is neither a valid file, directory, thread count, nor time value. Use -h for help."
     exit 1
 fi
-
 # Validate input directory
 if [[ ! -d "$input_dir" ]]; then
     echo "Error: Input directory '$input_dir' does not exist."
@@ -306,23 +316,23 @@ generate_spectrograms() {
     # Truncate file_duration to an integer
     file_duration=${file_duration%.*}
 
-    # Check if start_time exceeds file duration
-    if (( start_seconds >= file_duration )); then
-        echo -e "${RED}Error: Start time '$start_time_formatted' exceeds file duration ($file_duration seconds). Skipping.${NC}"
-        increment_counter "error"
-        increment_counter "processed"
-        source "$counter_file"
-        echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
-        return
+# Check if start_time exceeds file duration
+if (( start_seconds >= file_duration )); then
+    echo -e "${YELLOW}Warning: Start time '$start_time_formatted' exceeds file duration ($file_duration seconds). Adjusting start time.${NC}"
+    # Calculate the latest valid start time
+    start_seconds=$((file_duration - duration_seconds))
+    if (( start_seconds < 0 )); then
+        start_seconds=0  # Fallback to 0 if the file is too short
     fi
+    start_time_formatted=$(seconds_to_time "$start_seconds")
+fi
 
-    # Adjust duration if start_time + duration exceeds file duration
-    if (( start_seconds + duration_seconds > file_duration )); then
-        echo -e "${YELLOW}Warning: Start time '$start_time_formatted' + duration '$duration_formatted' exceeds file duration ($file_duration seconds). Adjusting duration.${NC}"
-        duration_seconds=$((file_duration - start_seconds))
-        duration_formatted=$(seconds_to_time "$duration_seconds")
-    fi
-
+# Adjust duration if start_time + duration still exceeds file duration
+if (( start_seconds + duration_seconds > file_duration )); then
+    echo -e "${YELLOW}Warning: Start time '$start_time_formatted' + duration '$duration_formatted' exceeds file duration ($file_duration seconds). Adjusting duration.${NC}"
+    duration_seconds=$((file_duration - start_seconds))
+    duration_formatted=$(seconds_to_time "$duration_seconds")
+fi
     # Debugging: Log the final start_time and duration being used
     echo "DEBUG: Final start_time='$start_time_formatted', duration='$duration_formatted'" >>"$log_file"
 
