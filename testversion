@@ -152,12 +152,6 @@ while [[ "$1" == -* ]]; do
     esac
 done
 
-# Assign arguments after parsing options
-input_dir="$(pwd)"  # Default to current directory
-threads="$default_threads"
-start_time="$default_start_time"
-duration="$default_duration"
-
 if [[ -z "$1" ]]; then
     # No arguments provided: Default to current directory
     input_dir="$(pwd)"
