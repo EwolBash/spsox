@@ -76,9 +76,8 @@ show_help() {
     echo "Notes:"
     echo "  - The 'start_time' and 'duration' arguments must be in HH:MM:SS or MM:SS format."
     echo "  - If 'start_time + duration' exceeds the file length, the duration is adjusted automatically."
-    echo "  - Logs are written to '$log_file'. You can change the log file path by setting the"
-    echo "    by modifying the script or adding command-line options."
-    echo "  - Requires 'sox' to be installed. Install it using your package manager (e.g., apt, brew)."
+    echo "  - Logs are written to '$log_file'. You can change the log file path editing the config section of the script"
+    echo "  - Requires 'sox' to be installed. Install it using your package manager (e.g., apt, pacman)."
 }
 
 # Function to display version
