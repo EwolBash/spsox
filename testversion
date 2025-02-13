@@ -158,7 +158,13 @@ threads="$default_threads"
 start_time="$default_start_time"
 duration="$default_duration"
 
-if [[ -f "$1" ]]; then
+if [[ -z "$1" ]]; then
+    # No arguments provided: Default to current directory
+    input_dir="$(pwd)"
+    threads="$default_threads"
+    start_time="$default_start_time"
+    duration="$default_duration"
+elif [[ -f "$1" ]]; then
     # Input is a single FLAC file
     single_file="$1"
     threads="${2:-$default_threads}"  # Use second argument as thread count, or default
