@@ -18,7 +18,7 @@
 script_name=$(basename "$0")
 # Configuration
 script_version="0.4"
-default_threads=4  # Default number of threads if not specified
+default_threads=$(nproc)  # Default to the number of CPU cores
 default_start_time="1:00"  # Default start time for zoomed spectrogram
 default_duration="0:02"    # Default duration for zoomed spectrogram
 log_file="/tmp/spsox.log"
@@ -226,10 +226,6 @@ duration_seconds=$(time_to_seconds "$duration")
 start_time_formatted=$(seconds_to_time "$start_seconds")
 duration_formatted=$(seconds_to_time "$duration_seconds")
 
-# Debugging: Log the parsed start_time and duration
-echo "DEBUG: Parsed start_time='$start_time' -> $start_seconds seconds -> formatted as '$start_time_formatted'" >>"$log_file"
-echo "DEBUG: Parsed duration='$duration' -> $duration_seconds seconds -> formatted as '$duration_formatted'" >>"$log_file"
-
 # Variables to track progress and summary
 total_files=$(find "$input_dir" -type f -name "*.flac" | wc -l)
 counter_file="/tmp/spsox_counters"
@@ -265,9 +261,6 @@ increment_counter() {
 # Function to generate spectrograms for a single FLAC file
 generate_spectrograms() {
     local file="$1"
-
-    # Debugging: Log the file being processed
-    echo "DEBUG: Processing file: '$file'" >>"$log_file"
 
     # Skip if the file is empty or invalid
     if [[ -z "$file" || ! -f "$file" ]]; then
@@ -332,9 +325,6 @@ if (( start_seconds + duration_seconds > file_duration )); then
     duration_seconds=$((file_duration - start_seconds))
     duration_formatted=$(seconds_to_time "$duration_seconds")
 fi
-    # Debugging: Log the final start_time and duration being used
-    echo "DEBUG: Final start_time='$start_time_formatted', duration='$duration_formatted'" >>"$log_file"
-
     # Generate the zoomed spectrogram
     echo -e "Generating zoomed spectrogram for ${base_name} starting at ${start_time_formatted} with duration ${duration_formatted}..."
     sox "$file" -n remix 1 spectrogram \
