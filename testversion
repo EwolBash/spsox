@@ -1,4 +1,7 @@
 #!/bin/bash
+# spsox is a simple bash script that creates spectrograms from flac files.
+# Made by Ewol
+#
 # This script is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
