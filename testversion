@@ -152,6 +152,7 @@ while [[ "$1" == -* ]]; do
     esac
 done
 
+# Assign arguments after parsing options
 if [[ -z "$1" ]]; then
     # No arguments provided: Default to current directory
     input_dir="$(pwd)"
