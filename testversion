@@ -153,12 +153,14 @@ while [[ "$1" == -* ]]; do
 done
 
 # Assign arguments after parsing options
+input_dir="$(pwd)"  # Default to current directory
+threads="$default_threads"
+start_time="$default_start_time"
+duration="$default_duration"
+
 if [[ -z "$1" ]]; then
     # No arguments provided: Default to current directory
-    input_dir="$(pwd)"
-    threads="$default_threads"
-    start_time="$default_start_time"
-    duration="$default_duration"
+    :
 elif [[ -f "$1" ]]; then
     # Input is a single FLAC file
     single_file="$1"
@@ -174,6 +176,7 @@ elif [[ -d "$1" ]]; then
 elif is_number "$1"; then
     # First argument is a number (interpreted as thread count)
     threads="$1"
+    input_dir="$(pwd)"  # Explicitly set input_dir to current directory
     start_time="${2:-$default_start_time}"  # Use second argument as start time, or default
     duration="${3:-$default_duration}"     # Use third argument as duration, or default
 else
