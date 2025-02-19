@@ -76,7 +76,7 @@ show_help() {
     echo "Notes:"
     echo "  - The 'start_time' and 'duration' arguments must be in HH:MM:SS or MM:SS format."
     echo "  - If 'start_time + duration' exceeds the file length, the duration is adjusted automatically."
-    echo "  - Logs are written to '$log_file'. You can change the log file path editing the config section of the script"
+    echo "  - Logs are written to '$log_file'. You can change the log file path by editing the config section of the script"
     echo "  - Requires 'sox' to be installed. Install it using your package manager (e.g., apt, pacman)."
 }
 
@@ -140,15 +140,15 @@ seconds_to_time() {
 recursive=false
 while [[ "$1" == -* ]]; do
     case "$1" in
-        -r | --recursive)
+        -r|--recursive)
             recursive=true
             shift
             ;;
-        -h | --help)
+        -h|--help)
             show_help
             exit 0
             ;;
-        -v | --version)
+        -v|--version)
             show_version
             exit 0
             ;;
@@ -194,6 +194,7 @@ else
     echo "Error: '$1' is neither a valid file, directory, thread count, nor time value. Use -h for help."
     exit 1
 fi
+
 # Validate input directory
 if [[ ! -d "$input_dir" ]]; then
     echo "Error: Input directory '$input_dir' does not exist."
@@ -297,7 +298,7 @@ generate_spectrograms() {
     # Get the duration of the FLAC file
     local file_duration=$(soxi -D "$file" 2>/dev/null)
     if [[ $? -ne 0 || -z "$file_duration" ]]; then
-        echo -e "${RED}Error: Unable to determine duration of file '$file'. Skipping.${NC}"
+        echo -e "${RED}Error: Unable to determine duration of file '$file'. Skipping. ${NC}"
         increment_counter "error"
         increment_counter "processed"
         source "$counter_file"
@@ -308,23 +309,24 @@ generate_spectrograms() {
     # Truncate file_duration to an integer
     file_duration=${file_duration%.*}
 
-# Check if start_time exceeds file duration
-if (( start_seconds >= file_duration )); then
-    echo -e "${YELLOW}Warning: Start time '$start_time_formatted' exceeds file duration ($file_duration seconds). Adjusting start time.${NC}"
-    # Calculate the latest valid start time
-    start_seconds=$((file_duration - duration_seconds))
-    if (( start_seconds < 0 )); then
-        start_seconds=0  # Fallback to 0 if the file is too short
+    # Check if start_time exceeds file duration
+    if (( start_seconds >= file_duration )); then
+        echo -e "${YELLOW}Warning: Start time '$start_time_formatted' exceeds file duration ($file_duration seconds). Adjusting start time.${NC}"
+        # Calculate the latest valid start time
+        start_seconds=$((file_duration - duration_seconds))
+        if (( start_seconds < 0 )); then
+            start_seconds=0  # Fallback to 0 if the file is too short
+        fi
+        start_time_formatted=$(seconds_to_time "$start_seconds")
     fi
-    start_time_formatted=$(seconds_to_time "$start_seconds")
-fi
 
-# Adjust duration if start_time + duration still exceeds file duration
-if (( start_seconds + duration_seconds > file_duration )); then
-    echo -e "${YELLOW}Warning: Start time '$start_time_formatted' + duration '$duration_formatted' exceeds file duration ($file_duration seconds). Adjusting duration.${NC}"
-    duration_seconds=$((file_duration - start_seconds))
-    duration_formatted=$(seconds_to_time "$duration_seconds")
-fi
+    # Adjust duration if start_time + duration still exceeds file duration
+    if (( start_seconds + duration_seconds > file_duration )); then
+        echo -e "${YELLOW}Warning: Start time '$start_time_formatted' + duration '$duration_formatted' exceeds file duration ($file_duration seconds). Adjusting duration.${NC}"
+        duration_seconds=$((file_duration - start_seconds))
+        duration_formatted=$(seconds_to_time "$duration_seconds")
+    fi
+
     # Generate the zoomed spectrogram
     echo -e "Generating zoomed spectrogram for ${base_name} starting at ${start_time_formatted} with duration ${duration_formatted}..."
     sox "$file" -n remix 1 spectrogram \
@@ -363,6 +365,7 @@ fi
         echo -e "${GREEN}Progress: $processed/$total_files files processed.${NC}"
     fi
 }
+
 export -f generate_spectrograms
 
 # Trap to clean up background jobs on script exit or interrupt
@@ -390,7 +393,7 @@ else
             generate_spectrograms "$file"
         ) &
         # Store the PID of the background job
-        pids+=($!)
+        pids+=("$!")
         # Limit the number of concurrent jobs
         while (( ${#pids[@]} >= threads )); do
             # Wait for any job to finish
@@ -401,30 +404,5 @@ else
             done
             sleep 0.1
         done
-    done < <(eval "$find_command")
-
-    # Wait for all remaining background jobs to finish
-    for pid in "${pids[@]}"; do
-        wait "$pid"
-    done
+    done < <($find_command)
 fi
-
-# End timing
-end_time=$(date +%s)
-
-# Calculate total time
-total_time=$((end_time - start_time))
-
-# Read final counters
-source "$counter_file"
-
-# Display summary
-echo ""
-echo "Processing Summary:"
-echo "-------------------"
-echo "Total Files: $total_files"
-echo "Successfully Processed: $success"
-echo "Skipped (Already Processed): $skipped"
-echo "Errors: $error"
-echo "Total Time: ${total_time} seconds."
-echo "Check '$log_file' for details."
