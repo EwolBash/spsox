@@ -26,6 +26,27 @@ The new version is more of a beta, you can find the original in the oldversions 
   - **macOS**: `brew install sox`
 
 ---
+## Installation
+
+- **Installation**
+    
+Open a terminal and type or paste the following. 
+    
+    git clone https://github.com/EwolBash/spsox.git
+
+Next we move into the directory
+
+    cd spsox
+
+We make the script executable so we can run it.
+
+    chmod +x spsox
+
+Now we move it to the local bin directory so you can call it from wherever you need to.
+
+    sudo cp spsox /usr/local/bin/
+
+---
 
 ## Usage
 
