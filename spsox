@@ -15,9 +15,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this script. If not, see <https://www.gnu.org/licenses/>.
 
+# Script name
 script_name=$(basename "$0")
-# Configuration
-script_version="0.4"
+
+# Default configuration
 default_threads=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 1)  # Cross-platform CPU core count
 default_start_time="1:00"  # Default start time for zoomed spectrogram
 default_duration="0:02"    # Default duration for zoomed spectrogram
@@ -26,44 +27,96 @@ log_file="/tmp/spsox_$(date +%Y%m%d_%H%M%S).log"  # Timestamped log file
 # Define color codes for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
-YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
 # Check if log file is writable
 if ! touch "$log_file" &>/dev/null; then
-    echo -e "${RED}Error: Cannot write to log file '$log_file'. Check permissions.${NC}"
+    echo -e "${RED}Error: Cannot write to '$log_file'.${NC}"
     exit 1
 fi
-
-# Function to strip ANSI color codes
-strip_color_codes() {
-    echo "$1" | sed -E 's/\\033\[[0-9;]*m//g'
-}
 
 # Function to log messages with timestamps
 log_message() {
-    local message="$1"
-    local use_color="${2:-false}"  # Default to no color
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" >> "$log_file"
+}
 
-    # Strip color codes for the log file
-    local plain_message=$(strip_color_codes "$message")
+# Check if 'sox' is installed
+if ! command -v sox &>/dev/null; then
+    log_message "Error: 'sox' not installed."
+    echo -e "${RED}Error: 'sox' not installed.${NC}"
+    exit 1
+fi
 
-    # Log to file (plain text)
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $plain_message" >> "$log_file"
+# Helper function to check if a value is a number
+is_number() { [[ "$1" =~ ^[0-9]+$ ]]; }
 
-    # Log to terminal (with color if enabled)
-    if [[ "$use_color" == "true" ]]; then
-        echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] $message"
+# Helper function to validate time format (HH:MM:SS or MM:SS)
+is_valid_time() {
+    [[ "$1" =~ ^([0-9]{1,2}:)?[0-9]{1,2}:[0-9]{2}$ ]] || return 1
+    local h=${1%%:*}
+    local m=${1#*:}
+    m=${m%:}
+    local s=${1##*:}
+    [[ "$h" -le 23 && "$m" -le 59 && "$s" -le 59 ]]
+}
+
+# Helper function to convert time (HH:MM:SS or MM:SS) to seconds
+time_to_seconds() {
+    local t="$1"
+    local h=0
+    local m=0
+    local s=0
+    IFS=':' read -r p1 p2 p3 <<< "$t"
+    if [[ -n "$p3" ]]; then
+        h=${p1:-0}
+        m=${p2:-0}
+        s=${p3:-0}
     else
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] $plain_message"
+        m=${p1:-0}
+        s=${p2:-0}
+    fi
+    echo $((10#$h * 3600 + 10#$m * 60 + 10#$s))
+}
+
+# Helper function to convert seconds to HH:MM:SS or MM:SS
+seconds_to_time() {
+    local ts=$1
+    local h=$((ts / 3600))
+    local m=$(((ts % 3600) / 60))
+    local s=$((ts % 60))
+    if (( h > 0 )); then
+        printf "%02d:%02d:%02d" "$h" "$m" "$s"
+    else
+        printf "%02d:%02d" "$m" "$s"
     fi
 }
 
-# Dependency Check for sox and soxi
-if ! command -v sox &>/dev/null || ! command -v soxi &>/dev/null; then
-    log_message "${RED}Error: 'sox' or 'soxi' is not installed. Please install it before running this script.${NC}" "true"
-    exit 1
-fi
+# Function to validate X-axis resolution
+validate_x_axis() {
+    local x="$1"
+    if ! is_number "$x" || (( x < 100 || x > 10000 )); then
+        echo "Error: X-axis resolution must be between 100 and 10000."
+        exit 1
+    fi
+}
+
+# Function to validate Y-axis resolution
+validate_y_axis() {
+    local y="$1"
+    if ! is_number "$y" || (( y < 100 || y > 32768 )); then
+        echo "Error: Y-axis resolution must be between 100 and 32768."
+        exit 1
+    fi
+}
+
+# Function to validate Z-axis resolution
+validate_z_axis() {
+    local z="$1"
+    if ! is_number "$z" || (( z < 1 || z > 240 )); then
+        echo "Error: Z-axis resolution must be between 1 and 240."
+        exit 1
+    fi
+}
 
 # Function to display help
 show_help() {
@@ -75,9 +128,9 @@ show_help() {
     echo "  -v, --version         Display the script version and exit."
     echo "  -f, --force           Overwrite existing spectrogram files."
     echo "  -q, --quiet           Suppress non-error output."
-    echo "  -x, --x-axis          Set the X-axis resolution for the spectrogram (default: 500)."
-    echo "  -y, --y-axis          Set the Y-axis resolution for the spectrogram (default: 1025)."
-    echo "  -z, --z-axis          Set the Z-axis resolution for the spectrogram (default: 120)."
+    echo "  -x, --x-axis          Set the X-axis resolution for the spectrogram (default: 500, range: 100-10000)."
+    echo "  -y, --y-axis          Set the Y-axis resolution for the spectrogram (default: 1025, range: 100-32768)."
+    echo "  -z, --z-axis          Set the Z-axis resolution for the spectrogram (default: 120, range: 1-240)."
     echo ""
     echo "Arguments:"
     echo "  input                 Either a directory containing .flac files or a single .flac file."
@@ -112,68 +165,7 @@ show_help() {
     echo "  - The 'start_time' and 'duration' arguments must be in HH:MM:SS or MM:SS format."
     echo "  - If 'start_time + duration' exceeds the file length, the duration is adjusted automatically."
     echo "  - Logs are written to '$log_file'."
-    echo "  - Requires 'sox' and 'soxi' to be installed. Install them using your package manager (e.g., apt, pacman)."
-}
-
-# Function to display version
-show_version() {
-    echo "$script_name version $script_version"
-}
-
-# Helper function to check if a value is a number
-is_number() {
-    [[ "$1" =~ ^[0-9]+$ ]]
-}
-
-# Helper function to validate time format (HH:MM:SS or MM:SS)
-is_valid_time() {
-    [[ "$1" =~ ^([0-9]{1,2}:)?[0-9]{1,2}:[0-9]{2}$ ]] || return 1
-    local hours=${1%%:*}
-    local minutes=${1%:*}
-    minutes=${minutes#*:}
-    local seconds=${1##*:}
-    [[ "$hours" -le 23 && "$minutes" -le 59 && "$seconds" -le 59 ]]
-}
-
-# Helper function to convert time (HH:MM:SS or MM:SS) to seconds
-time_to_seconds() {
-    local time="$1"
-    local hours=0
-    local minutes=0
-    local seconds=0
-
-    # Split the time into components
-    IFS=':' read -r part1 part2 part3 <<< "$time"
-
-    # Determine the format (HH:MM:SS or MM:SS)
-    if [[ -n "$part3" ]]; then
-        # HH:MM:SS format
-        hours=${part1:-0}
-        minutes=${part2:-0}
-        seconds=${part3:-0}
-    else
-        # MM:SS format
-        hours=0
-        minutes=${part1:-0}
-        seconds=${part2:-0}
-    fi
-
-    # Convert to total seconds
-    echo $((10#$hours * 3600 + 10#$minutes * 60 + 10#$seconds))
-}
-
-# Helper function to convert seconds to HH:MM:SS or MM:SS
-seconds_to_time() {
-    local total_seconds=$1
-    local hours=$((total_seconds / 3600))
-    local minutes=$(( (total_seconds % 3600) / 60 ))
-    local seconds=$((total_seconds % 60))
-
-    if (( hours > 0 )); then
-        printf "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
-    else
-        printf "%02d:%02d" "$minutes" "$seconds"
-    fi
+    echo "  - Requires 'sox' to be installed. Install it using your package manager (e.g., apt, pacman)."
 }
 
 # Parse options
@@ -185,42 +177,27 @@ y_axis=1025
 z_axis=120
 while [[ "$1" == -* ]]; do
     case "$1" in
-        -r | --recursive)
-            recursive=true
-            shift
-            ;;
-        -f | --force)
-            force=true
-            shift
-            ;;
-        -q | --quiet)
-            quiet=true
-            shift
-            ;;
-        -x | --x-axis)
+        -r|--recursive) recursive=true; shift ;;
+        -f|--force) force=true; shift ;;
+        -q|--quiet) quiet=true; shift ;;
+        -x|--x-axis)
+            validate_x_axis "$2"
             x_axis="$2"
             shift 2
             ;;
-        -y | --y-axis)
+        -y|--y-axis)
+            validate_y_axis "$2"
             y_axis="$2"
             shift 2
             ;;
-        -z | --z-axis)
+        -z|--z-axis)
+            validate_z_axis "$2"
             z_axis="$2"
             shift 2
             ;;
-        -h | --help)
-            show_help
-            exit 0
-            ;;
-        -v | --version)
-            show_version
-            exit 0
-            ;;
-        *)
-            echo "Error: Unknown option '$1'. Use -h for help."
-            exit 1
-            ;;
+        -h|--help) show_help; exit 0 ;;
+        -v|--version) echo "$script_name version 0.4"; exit 0 ;;
+        *) echo "Error: Unknown option '$1'."; exit 1 ;;
     esac
 done
 
@@ -288,222 +265,166 @@ fi
 start_seconds=$(time_to_seconds "$start_time")
 duration_seconds=$(time_to_seconds "$duration")
 
-# Convert start_seconds and duration_seconds back to HH:MM:SS or MM:SS format
-start_time_formatted=$(seconds_to_time "$start_seconds")
-duration_formatted=$(seconds_to_time "$duration_seconds")
-
 # Variables to track progress and summary
 total_files=$(find "$input_dir" -type f -name "*.flac" | wc -l)
-counter_file="/tmp/spsox_counters"
-> "$counter_file"  # Initialize counter file
-echo "success=0" > "$counter_file"
-echo "skipped=0" >> "$counter_file"
-echo "error=0" >> "$counter_file"
-echo "processed=0" >> "$counter_file"
+specs_dir="$input_dir/specs"
+mkdir -p "$specs_dir" || { log_message "Error: Failed to create '$specs_dir'"; echo -e "${RED}Error: Failed to create '$specs_dir'${NC}"; exit 1; }
 
-# Lock file for atomic updates to counters
-lock_file="/tmp/spsox.lock"
-touch "$lock_file"
-
-# Function to atomically increment counters
-increment_counter() {
-    local counter_name="$1"
-    (
-        flock -x 200
-        source "$counter_file"
-        case "$counter_name" in
-            success) ((success++)) ;;
-            error) ((error++)) ;;
-            skipped) ((skipped++)) ;;
-            processed) ((processed++)) ;;
-        esac
-        # Write to a temporary file first
-        echo "success=$success" > "${counter_file}.tmp"
-        echo "skipped=$skipped" >> "${counter_file}.tmp"
-        echo "error=$error" >> "${counter_file}.tmp"
-        echo "processed=$processed" >> "${counter_file}.tmp"
-        # Atomically move the temporary file to the counters file
-        mv "${counter_file}.tmp" "$counter_file"
-    ) 200>"$lock_file"
-}
+# Temporary file to store counters
+counters_file=$(mktemp)
+echo "generated=0" > "$counters_file"
+echo "skipped=0" >> "$counters_file"
+echo "failed=0" >> "$counters_file"
+echo "adjusted=0" >> "$counters_file"
 
 # Function to generate spectrograms for a single FLAC file
 generate_spectrograms() {
     local file="$1"
-
-    # Skip if the file is empty or invalid
-    if [[ -z "$file" || ! -f "$file" ]]; then
-        log_message "${RED}ERROR: Invalid or empty file path: '$file'${NC}" "true"
-        increment_counter "error"
-        increment_counter "processed"
-        source "$counter_file"
-        log_message "${GREEN}Progress: $processed/$total_files files processed.${NC}" "true"
+    if [[ ! -f "$file" ]]; then
+        log_message "Error: File '$file' not found."
+        echo "failed=1" >> "$counters_file"
         return
     fi
 
-    # Validate FLAC file
-    if ! soxi "$file" &>/dev/null; then
-        log_message "${RED}Error: '$file' is not a valid FLAC file. Skipping.${NC}" "true"
-        increment_counter "error"
-        increment_counter "processed"
-        return
-    fi
-
-    # Determine the parent directory of the file
-    local parent_dir=$(dirname "$file")
     local base_name=$(basename "$file")
-
-    # Create a specs folder in the parent directory
-    local specs_dir="$parent_dir/specs"
-    mkdir -p "$specs_dir" || {
-        log_message "${RED}Error: Failed to create directory '$specs_dir'. Check permissions.${NC}" "true"
-        increment_counter "error"
-        return
-    }
-
-    # Define output file paths
     local zoomed_file="$specs_dir/${base_name%.*}.zoomed.png"
     local full_file="$specs_dir/${base_name%.*}.full.png"
 
-    # Skip if both spectrogram files already exist and force is not enabled
+    # Skip if files exist and force is not enabled
     if [[ -f "$zoomed_file" && -f "$full_file" && "$force" != true ]]; then
-        log_message "${YELLOW}Skipping $base_name (already processed)${NC}" "true"
-        increment_counter "skipped"
-        increment_counter "processed"
-        source "$counter_file"
-        log_message "${GREEN}Progress: $processed/$total_files files processed.${NC}" "true"
+        log_message "Skipping '$file': Spectrograms already exist."
+        echo "skipped=1" >> "$counters_file"
         return
     fi
 
-    # Log progress at the start of processing
-    log_message "${GREEN}Processing file $processed/$total_files: $base_name${NC}" "true"
-
-    # Get the duration of the FLAC file
-    local file_duration=$(soxi -D "$file" 2>/dev/null)
-    if [[ $? -ne 0 || -z "$file_duration" ]]; then
-        log_message "${RED}Error: Unable to determine duration of file '$file'. Skipping.${NC}" "true"
-        increment_counter "error"
-        increment_counter "processed"
-        source "$counter_file"
-        log_message "${GREEN}Progress: $processed/$total_files files processed.${NC}" "true"
+    local file_duration=$(soxi -D "$file" 2>/dev/null | cut -d. -f1)
+    if [[ -z "$file_duration" ]]; then
+        log_message "Error: Failed to get duration for '$file'."
+        echo "failed=1" >> "$counters_file"
         return
     fi
 
-    # Truncate file_duration to an integer
-    file_duration=${file_duration%.*}
+    local adj_start_seconds=$start_seconds
+    local adj_duration_seconds=$duration_seconds
 
-    # Check if start_time exceeds file duration
-    if (( start_seconds >= file_duration )); then
-        log_message "${YELLOW}Warning: Start time '$start_time_formatted' exceeds file duration ($file_duration seconds). Adjusting start time.${NC}" "true"
-        # Calculate the latest valid start time
-        start_seconds=$((file_duration - duration_seconds))
-        if (( start_seconds < 0 )); then
-            start_seconds=0  # Fallback to 0 if the file is too short
+    # Adjust start time if it exceeds the file duration
+    if (( adj_start_seconds >= file_duration )); then
+        adj_start_seconds=$((file_duration - adj_duration_seconds))
+        if (( adj_start_seconds < 0 )); then
+            adj_start_seconds=0
         fi
-        start_time_formatted=$(seconds_to_time "$start_seconds")
+        log_message "Adjusted start time for '$file' to $(seconds_to_time "$adj_start_seconds") due to file duration."
+        echo "adjusted=1" >> "$counters_file"
     fi
 
-    # Adjust duration if start_time + duration still exceeds file duration
-    if (( start_seconds + duration_seconds > file_duration )); then
-        log_message "${YELLOW}Warning: Start time '$start_time_formatted' + duration '$duration_formatted' exceeds file duration ($file_duration seconds). Adjusting duration.${NC}" "true"
-        duration_seconds=$((file_duration - start_seconds))
-        duration_formatted=$(seconds_to_time "$duration_seconds")
+    # Adjust duration if start_time + duration exceeds the file duration
+    if (( adj_start_seconds + adj_duration_seconds > file_duration )); then
+        adj_duration_seconds=$((file_duration - adj_start_seconds))
+        log_message "Adjusted duration for '$file' to $(seconds_to_time "$adj_duration_seconds") due to file duration."
+        echo "adjusted=1" >> "$counters_file"
     fi
 
-    # Generate the zoomed spectrogram
-    log_message "Generating zoomed spectrogram for ${base_name} starting at ${start_time_formatted} with duration ${duration_formatted}..." "true"
-    if ! sox "$file" -n remix 1 spectrogram \
-        -t "${base_name%.*}" \
-        -X "$x_axis" -y "$y_axis" -z "$z_axis" -w Kaiser -S "$start_time_formatted" -d "$duration_formatted" \
-        -o "$zoomed_file" 2>>"$log_file"; then
-        log_message "${RED}Error generating zoomed spectrogram for $base_name${NC}" "true"
-        increment_counter "error"
-        increment_counter "processed"
-        return
+    local adj_start_time=$(seconds_to_time "$adj_start_seconds")
+    local adj_duration=$(seconds_to_time "$adj_duration_seconds")
+
+    if sox --multi-threaded --buffer 128000 "$file" -n \
+        remix 1 spectrogram -t "${base_name%.*}" -X "$x_axis" -y "$y_axis" -z "$z_axis" -w Kaiser -S "$adj_start_time" -d "$adj_duration" -o "$zoomed_file" \
+        remix 1 spectrogram -t "${base_name%.*}" -x 3000 -y 513 -z 120 -w Kaiser -o "$full_file" 2>>"$log_file"; then
+        log_message "Success: Generated spectrograms for '$file'."
+        echo "generated=1" >> "$counters_file"
     else
-        log_message "${GREEN}Finished zoomed spectrogram for $base_name${NC}" "true"
-    fi
-
-    # Generate the full spectrogram
-    log_message "Generating full spectrogram for ${base_name}..." "true"
-    if ! sox "$file" -n remix 1 spectrogram \
-        -t "${base_name%.*}" \
-        -x 3000 -y 513 -z 120 -w Kaiser \
-        -o "$full_file" 2>>"$log_file"; then
-        log_message "${RED}Error generating full spectrogram for $base_name${NC}" "true"
-        increment_counter "error"
-        increment_counter "processed"
-        return
-    else
-        log_message "${GREEN}Finished full spectrogram for $base_name${NC}" "true"
-        increment_counter "success"
-        increment_counter "processed"
-        source "$counter_file"
-        log_message "${GREEN}Progress: $processed/$total_files files processed.${NC}" "true"
+        log_message "Error: Failed to generate spectrograms for '$file'."
+        echo "failed=1" >> "$counters_file"
     fi
 }
 export -f generate_spectrograms
 
-# Trap to clean up background jobs on script exit or interrupt
-trap 'kill $(jobs -p) 2>/dev/null; rm -f "$lock_file" "$counter_file" "${counter_file}.tmp"; echo "Cleaning up..."' EXIT
+# Function to display a progress bar
+progress_bar() {
+    local current=$1
+    local total=$2
+    local width=50
+    local percent=$((current * 100 / total))
+    local filled=$((current * width / total))
+    local empty=$((width - filled))
+    printf "\r["
+    printf "%${filled}s" | tr ' ' '='
+    printf "%${empty}s" | tr ' ' ' '
+    printf "] %3d%%" "$percent"
+}
 
-# Array to track background job PIDs
-declare -a pids=()
+# Trap to clean up background jobs on script exit or interrupt
+trap 'kill $(jobs -p) 2>/dev/null; echo "Cleaning up..."' EXIT
 
 # Start timing
 start_time=$(date +%s)
 
+# Preload files to cache
+log_message "Preloading files to cache..."
+[[ "$quiet" != "true" ]] && echo -e "${GREEN}Preloading files...${NC}"
+if $recursive; then
+    find "$input_dir" -type f -name "*.flac" -exec cat {} >/dev/null 2>&1 \;
+else
+    find "$input_dir" -maxdepth 1 -type f -name "*.flac" -exec cat {} >/dev/null 2>&1 \;
+fi
+
+# Process files
+[[ "$quiet" != "true" ]] && echo -e "${GREEN}Processing...${NC}"
 if [[ -n "$single_file" ]]; then
-    # Process the single file
     generate_spectrograms "$single_file"
 else
-    # Process all FLAC files in the directory
     if $recursive; then
         find_command="find \"$input_dir\" -type f -name \"*.flac\" -print0"
     else
         find_command="find \"$input_dir\" -maxdepth 1 -type f -name \"*.flac\" -print0"
     fi
 
+    declare -A pids
+    processed_files=0
     while IFS= read -r -d '' file; do
-        (
-            generate_spectrograms "$file"
-        ) &
-        # Store the PID of the background job
-        pids+=($!)
-        # Limit the number of concurrent jobs
         while (( ${#pids[@]} >= threads )); do
-            # Wait for any job to finish
-            for i in "${!pids[@]}"; do
-                if ! kill -0 "${pids[i]}" 2>/dev/null; then
-                    unset 'pids[i]'
+            for pid in "${!pids[@]}"; do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    wait "$pid"
+                    unset "pids[$pid]"
+                    processed_files=$((processed_files + 1))
+                    progress_bar "$processed_files" "$total_files"
                 fi
             done
-            sleep 0.1
         done
+        generate_spectrograms "$file" &
+        pids[$!]="running"
     done < <(eval "$find_command")
 
     # Wait for all remaining background jobs to finish
-    for pid in "${pids[@]}"; do
+    for pid in "${!pids[@]}"; do
         wait "$pid"
+        processed_files=$((processed_files + 1))
+        progress_bar "$processed_files" "$total_files"
     done
 fi
 
 # End timing
 end_time=$(date +%s)
-
-# Calculate total time
 total_time=$((end_time - start_time))
 
-# Read final counters
-source "$counter_file"
+# Aggregate counters from the temporary file
+generated=$(grep "generated=" "$counters_file" | cut -d= -f2 | paste -sd+ | bc)
+skipped=$(grep "skipped=" "$counters_file" | cut -d= -f2 | paste -sd+ | bc)
+failed=$(grep "failed=" "$counters_file" | cut -d= -f2 | paste -sd+ | bc)
+adjusted=$(grep "adjusted=" "$counters_file" | cut -d= -f2 | paste -sd+ | bc)
 
-# Display summary
+# Post-run summary
 echo ""
 echo "Processing Summary:"
 echo "-------------------"
 echo "Total Files: $total_files"
-echo "Successfully Processed: $success"
-echo "Skipped (Already Processed): $skipped"
-echo "Errors: $error"
+echo "Spectrograms Generated: $generated"
+echo "Skipped: $skipped"
+echo "Failed: $failed"
+echo "Adjusted: $adjusted"
 echo "Total Time: ${total_time} seconds."
-echo "Check '$log_file' for details."
+echo "Check '$log_file' for errors."
+
+# Clean up temporary file
+rm -f "$counters_file"
